@@ -1,0 +1,15 @@
+{
+	"name": "FileDB",
+	"version": "0.1.0",
+	"author": {
+		"name": "LostAbaddon",
+		"email": "LostAbaddon@gmail.com"
+	},
+	"main": "index.js",
+	"license": "MIT",
+	"homepage": "https://github.com/LostAbaddon/FileDB",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/LostAbaddon/FileDB"
+	},
+}
