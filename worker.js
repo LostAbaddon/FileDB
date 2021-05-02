@@ -2,9 +2,6 @@ const Path = require('path');
 const FS = require('fs/promises');
 const Thread = require('worker_threads');
 
-const send = (event, data) => {
-	Thread.parentPort.postMessage({event, data});
-};
 const prepareFile = async filepath => {
 	var has = false;
 	try {
@@ -47,21 +44,30 @@ const prepareFile = async filepath => {
 	await FS.writeFile(filepath, '', 'utf-8');
 	return true;
 };
-const findByIndex = (index, key) => {
-	if (!indexedKeys.includes(index)) return -1;
-	var map = indexedContent.get(index);
+
+const DB = {};
+DB.content = [];
+DB.indexedKeys = [];
+DB.indexedContent = new Map();
+DB.dirty = false;
+DB.send = (event, data) => {
+	Thread.parentPort.postMessage({event, data});
+};
+DB.findByIndex = (index, key) => {
+	if (!DB.indexedKeys.includes(index)) return -1;
+	var map = DB.indexedContent.get(index);
 	if (!map) return -1;
 	var ele = map.get(key);
 	if (!ele) return -1;
-	return content.indexOf(ele);
+	return DB.content.indexOf(ele);
 };
-const saveFile = async () => {
-	if (!dirty) return false;
-	dirty = false;
+DB.saveFile = async () => {
+	if (!DB.dirty) return false;
+	DB.dirty = false;
 	var done = false;
 
-	if (autoClear > 0) clearData();
-	var ctx = JSON.stringify(content);
+	if (autoClear > 0) DB.clearData();
+	var ctx = JSON.stringify(DB.content);
 	try {
 		await FS.writeFile(Thread.workerData.filepath, ctx, 'utf-8');
 		done = true;
@@ -71,69 +77,69 @@ const saveFile = async () => {
 		done = false;
 	}
 
-	if (dirty === true) {
-		if (!!requestSaveFile.timer) {
-			let list = requestSaveFile.resList.map(r => r);
-			requestSaveFile.resList.splice(0, requestSaveFile.resList.length);
-			clearTimeout(requestSaveFile.timer);
-			requestSaveFile.timer = null;
+	if (DB.dirty === true) {
+		if (!!DB.requestSaveFile.timer) {
+			let list = DB.requestSaveFile.resList.map(r => r);
+			DB.requestSaveFile.resList.splice(0, DB.requestSaveFile.resList.length);
+			clearTimeout(DB.requestSaveFile.timer);
+			DB.requestSaveFile.timer = null;
 			list.forEach(r => r(false));
 		}
-		dirty = false;
-		requestSaveFile();
+		DB.dirty = false;
+		DB.requestSaveFile();
 	}
 	else {
-		requestSaveFile.timer = null;
+		DB.requestSaveFile.timer = null;
 	}
 	return done;
 };
-const requestSaveFile = () => new Promise(res => {
-	if (dirty) return requestSaveFile.resList.push(res);
-	dirty = true;
-	if (!!requestSaveFile.timer) {
-		let list = requestSaveFile.resList.map(r => r);
-		requestSaveFile.resList.splice(0, requestSaveFile.resList.length);
-		clearTimeout(requestSaveFile.timer);
+DB.requestSaveFile = () => new Promise(res => {
+	if (DB.dirty) return DB.requestSaveFile.resList.push(res);
+	DB.dirty = true;
+	if (!!DB.requestSaveFile.timer) {
+		let list = DB.requestSaveFile.resList.map(r => r);
+		DB.requestSaveFile.resList.splice(0, DB.requestSaveFile.resList.length);
+		clearTimeout(DB.requestSaveFile.timer);
 		list.forEach(r => r(false));
 	}
-	requestSaveFile.timer = setTimeout(async () => {
-		var list = requestSaveFile.resList.map(r => r);
-		requestSaveFile.resList.splice(0, requestSaveFile.resList.length);
-		var ok = await saveFile();
+	DB.requestSaveFile.timer = setTimeout(async () => {
+		var list = DB.requestSaveFile.resList.map(r => r);
+		DB.requestSaveFile.resList.splice(0, DB.requestSaveFile.resList.length);
+		var ok = await DB.saveFile();
 		res(ok);
 		list.forEach(r => r(false));
 	}, saveDelay);
 });
-requestSaveFile.resList = [];
-const clearData = () => {
+DB.requestSaveFile.resList = [];
+DB.clearData = () => {
 	var now = Date.now();
-	var removes = content.map((item, i) => {
+	var removes = DB.content.map((item, i) => {
 		var duration = now - (item.stamp || 0) - item.count * delayDuration;
 		return [duration, item, i];
 	}).filter(item => item[0] >= autoClear);
-	var lastCount = content.length;
+	var lastCount = DB.content.length;
 	removes.reverse().forEach(([duration, item, index]) => {
-		content.splice(index, 1);
-		indexedKeys.forEach(key => {
-			var map = indexedContent.get(key);
+		DB.content.splice(index, 1);
+		DB.indexedKeys.forEach(key => {
+			var map = DB.indexedContent.get(key);
 			if (!map) return;
 			map.delete(item.data[key]);
 		});
 	});
-	var count = content.length;
+	var count = DB.content.length;
 	if (count < lastCount) console.log("Auto Expired " + (lastCount - count) + " items.");
+	DB.requestDataClearer();
 };
-const requestDataClearer = () => {
-	if (!!requestDataClearer.timer) {
-		clearTimeout(requestDataClearer.timer);
+DB.requestDataClearer = () => {
+	if (!!DB.requestDataClearer.timer) {
+		clearTimeout(DB.requestDataClearer.timer);
 	}
 	if (autoClear <= 0) return;
-	requestDataClearer.timer = setTimeout(clearData, ClearDuration);
+	DB.requestDataClearer.timer = setTimeout(DB.clearData, ClearDuration);
 };
 
 const ClearDuration = 1000 * 5;
-const content = [], indexedKeys = [], indexedContent = new Map();
-var dirty = false, saveDelay = 1000, autoClear = -1, delayDuration = 0;
+var saveDelay = 1000, autoClear = -1, delayDuration = 0;
 
 Thread.parentPort.on('message', msg => {
 	if (!msg || !msg.event) return;
@@ -143,13 +149,13 @@ Thread.parentPort.on('set', request => {
 	var result = false, index, ele;
 	if (!request.index || request.index === '_index') {
 		index = request.key;
-		ele = content[request.key];
+		ele = DB.content[request.key];
 		if (!!ele) result = true;
 	}
 	else {
-		index = findByIndex(request.index);
+		index = DB.findByIndex(request.index);
 		if (index >= 0) {
-			ele = content[index];
+			ele = DB.content[index];
 			result = true;
 		}
 	}
@@ -159,9 +165,9 @@ Thread.parentPort.on('set', request => {
 			count: (ele.count || 0) + 1,
 			data: request.value
 		};
-		content[index] = value;
-		indexedKeys.forEach(key => {
-			var map = indexedContent.get(key);
+		DB.content[index] = value;
+		DB.indexedKeys.forEach(key => {
+			var map = DB.indexedContent.get(key);
 			if (!map) return;
 			var v = ele.data[key];
 			if (!v) return;
@@ -177,39 +183,39 @@ Thread.parentPort.on('set', request => {
 			count: 0,
 			data: request.value
 		};
-		content.push(target);
-		indexedKeys.forEach(key => {
+		DB.content.push(target);
+		DB.indexedKeys.forEach(key => {
 			var value = request.value[key];
 			if (!value && value !== 0) return;
-			var map = indexedContent.get(key);
+			var map = DB.indexedContent.get(key);
 			if (!map) {
 				map = new Map();
-				indexedContent.set(key, map);
+				DB.indexedContent.set(key, map);
 			}
 			map.set(value, target);
 		});
 	}
-	send('jobdone', {tid: request.tid, result, count: content.length});
-	requestSaveFile();
+	DB.send('jobdone', {tid: request.tid, result, count: DB.content.length});
+	DB.requestSaveFile();
 });
 Thread.parentPort.on('get', request => {
 	var result;
 	if (!request.index || request.index === '_index') {
-		result = content[request.key];
+		result = DB.content[request.key];
 	}
-	else if (indexedKeys.includes(request.index)) {
-		let map = indexedContent.get(request.index);
+	else if (DB.indexedKeys.includes(request.index)) {
+		let map = DB.indexedContent.get(request.index);
 		if (!!map) {
 			result = map.get(request.key);
 		}
 	}
 	if (!result) {
-		send('jobdone', {tid: request.tid, result: null});
+		DB.send('jobdone', {tid: request.tid, result: null});
 		return;
 	}
 	result.count = (result.count || 0) + 1; 
 	result.stamp = Date.now();
-	send('jobdone', {tid: request.tid, result: result.data});
+	DB.send('jobdone', {tid: request.tid, result: result.data});
 });
 Thread.parentPort.on('append', request => {
 	var target = {
@@ -217,19 +223,19 @@ Thread.parentPort.on('append', request => {
 		count: 0,
 		data: request.value
 	};
-	content.push(target);
-	indexedKeys.forEach(key => {
+	DB.content.push(target);
+	DB.indexedKeys.forEach(key => {
 		var value = request.value[key];
 		if (!value && value !== 0) return;
-		var map = indexedContent.get(key);
+		var map = DB.indexedContent.get(key);
 		if (!map) {
 			map = new Map();
-			indexedContent.set(key, map);
+			DB.indexedContent.set(key, map);
 		}
 		map.set(value, target);
 	});
-	send('jobdone', {tid: request.tid, result: true, count: content.length});
-	requestSaveFile();
+	DB.send('jobdone', {tid: request.tid, result: true, count: DB.content.length});
+	DB.requestSaveFile();
 });
 Thread.parentPort.on('prepend', request => {
 	var target = {
@@ -237,19 +243,19 @@ Thread.parentPort.on('prepend', request => {
 		count: 0,
 		data: request.value
 	};
-	content.unshift(target);
-	indexedKeys.forEach(key => {
+	DB.content.unshift(target);
+	DB.indexedKeys.forEach(key => {
 		var value = request.value[key];
 		if (!value && value !== 0) return;
-		var map = indexedContent.get(key);
+		var map = DB.indexedContent.get(key);
 		if (!map) {
 			map = new Map();
-			indexedContent.set(key, map);
+			DB.indexedContent.set(key, map);
 		}
 		map.set(value, target);
 	});
-	send('jobdone', {tid: request.tid, result: true, count: content.length});
-	requestSaveFile();
+	DB.send('jobdone', {tid: request.tid, result: true, count: DB.content.length});
+	DB.requestSaveFile();
 });
 Thread.parentPort.on('insertBefore', request => {
 	var target = {
@@ -257,19 +263,19 @@ Thread.parentPort.on('insertBefore', request => {
 		count: 0,
 		data: request.value
 	};
-	content.splice(request.index, 0, target);
-	indexedKeys.forEach(key => {
+	DB.content.splice(request.index, 0, target);
+	DB.indexedKeys.forEach(key => {
 		var value = request.value[key];
 		if (!value && value !== 0) return;
-		var map = indexedContent.get(key);
+		var map = DB.indexedContent.get(key);
 		if (!map) {
 			map = new Map();
-			indexedContent.set(key, map);
+			DB.indexedContent.set(key, map);
 		}
 		map.set(value, target);
 	});
-	send('jobdone', {tid: request.tid, result: true, count: content.length});
-	requestSaveFile();
+	DB.send('jobdone', {tid: request.tid, result: true, count: DB.content.length});
+	DB.requestSaveFile();
 });
 Thread.parentPort.on('insertAfter', request => {
 	var target = {
@@ -277,53 +283,53 @@ Thread.parentPort.on('insertAfter', request => {
 		count: 0,
 		data: request.value
 	};
-	content.splice(request.index + 1, 0, target);
-	indexedKeys.forEach(key => {
+	DB.content.splice(request.index + 1, 0, target);
+	DB.indexedKeys.forEach(key => {
 		var value = request.value[key];
 		if (!value && value !== 0) return;
-		var map = indexedContent.get(key);
+		var map = DB.indexedContent.get(key);
 		if (!map) {
 			map = new Map();
-			indexedContent.set(key, map);
+			DB.indexedContent.set(key, map);
 		}
 		map.set(value, target);
 	});
-	send('jobdone', {tid: request.tid, result: true, count: content.length});
-	requestSaveFile();
+	DB.send('jobdone', {tid: request.tid, result: true, count: DB.content.length});
+	DB.requestSaveFile();
 });
 Thread.parentPort.on('findByIndex', request => {
 	var result;
 	if (!request.index || request.index === '_index') {
 		result = request.key;
-		if (!content[result]) result = -1;
+		if (!DB.content[result]) result = -1;
 	}
 	else {
-		result = findByIndex(request.index, request.key);
+		result = DB.findByIndex(request.index, request.key);
 	}
-	send('jobdone', {tid: request.tid, result});
+	DB.send('jobdone', {tid: request.tid, result});
 });
 Thread.parentPort.on('remove', request => {
 	var result = false, index = -1;
 	if (!request.index || request.index === '_index') {
 		index = request.key;
 	}
-	else if (indexedKeys.includes(request.index)) {
-		index = findByIndex(request.index, request.key);
+	else if (DB.indexedKeys.includes(request.index)) {
+		index = DB.findByIndex(request.index, request.key);
 	}
 	if (index >= 0) {
-		let ele = content[index];
+		let ele = DB.content[index];
 		if (!!ele) {
-			content.splice(index, 1);
-			indexedKeys.forEach(key => {
-				var map = indexedContent.get(key);
+			DB.content.splice(index, 1);
+			DB.indexedKeys.forEach(key => {
+				var map = DB.indexedContent.get(key);
 				if (!map) return;
 				map.delete(ele[key]);
 			});
 			result = true;
 		}
 	}
-	send('jobdone', {tid: request.tid, result, count: content.length});
-	requestSaveFile();
+	DB.send('jobdone', {tid: request.tid, result, count: DB.content.length});
+	DB.requestSaveFile();
 });
 Thread.parentPort.on('filter', request => {
 	var fun, err, result;
@@ -336,7 +342,7 @@ Thread.parentPort.on('filter', request => {
 	}
 	if (!err) {
 		result = [];
-		content.some((item, i) => {
+		DB.content.some((item, i) => {
 			var available;
 			try {
 				available = fun(item.data, i);
@@ -349,7 +355,7 @@ Thread.parentPort.on('filter', request => {
 		});
 		if (!!err) result = undefined;
 	}
-	send('jobdone', {tid: request.tid, result: {result, err}});
+	DB.send('jobdone', {tid: request.tid, result: {result, err}});
 });
 Thread.parentPort.on('forEach', request => {
 	var fun, err, result;
@@ -361,7 +367,7 @@ Thread.parentPort.on('forEach', request => {
 		err = e.message;
 	}
 	if (!err) {
-		content.some((item, i) => {
+		DB.content.some((item, i) => {
 			try {
 				fun(item.data, i);
 			}
@@ -371,17 +377,17 @@ Thread.parentPort.on('forEach', request => {
 			}
 		});
 	}
-	send('jobdone', {tid: request.tid, result: {result, err}});
+	DB.send('jobdone', {tid: request.tid, result: {result, err}});
 });
 Thread.parentPort.on('flush', async request => {
 	var ok = false;
 	if (request.immediate) {
-		ok = await saveFile();
+		ok = await DB.saveFile();
 	}
 	else {
-		ok = await requestSaveFile();
+		ok = await DB.requestSaveFile();
 	}
-	send('jobdone', {tid: request.tid, result: ok});
+	DB.send('jobdone', {tid: request.tid, result: ok});
 });
 
 (async () => {
@@ -392,7 +398,7 @@ Thread.parentPort.on('flush', async request => {
 
 	var ok = await prepareFile(Thread.workerData.filepath);
 	if (!ok) {
-		send('suicide');
+		DB.send('suicide');
 		return;
 	}
 
@@ -400,23 +406,23 @@ Thread.parentPort.on('flush', async request => {
 	try {
 		ctx = await FS.readFile(Thread.workerData.filepath);
 		ctx = ctx.toString();
-		content.splice(0, content.length);
+		DB.content.splice(0, DB.content.length);
 		if (ctx.length > 0) {
-			content.push(...(JSON.parse(ctx)));
+			DB.content.push(...(JSON.parse(ctx)));
 		}
 	}
 	catch (err) {
 		console.error(err);
-		send('suicide');
+		DB.send('suicide');
 		return;
 	}
 
 	if (Thread.workerData.extension) {
 		let loader = require(Thread.workerData.extension);
 		if (!!loader) {
-			if (loader instanceof Function) await loader();
-			else if (loader.init instanceof Function) await loader.init();
-			else if (loader.onInit instanceof Function) await loader.onInit();
+			if (loader instanceof Function) await loader(DB);
+			else if (loader.init instanceof Function) await loader.init(DB);
+			else if (loader.onInit instanceof Function) await loader.onInit(DB);
 		}
 	}
 
@@ -427,19 +433,19 @@ Thread.parentPort.on('flush', async request => {
 
 		keys.forEach(key => {
 			var map = new Map();
-			content.forEach(line => {
+			DB.content.forEach(line => {
 				var value = line.data[key];
 				if (!value) return;
 				map.set(value, line);
 			});
-			indexedContent.set(key, map);
-			indexedKeys.push(key);
+			DB.indexedContent.set(key, map);
+			DB.indexedKeys.push(key);
 		});
 	}
 	if (Thread.workerData.option?.delay > 0) {
 		saveDelay = Thread.workerData.option?.delay;
 	}
-	if (autoClear > 0) clearData();
+	if (autoClear > 0) DB.clearData();
 
-	send('init', content.length);
+	DB.send('init', DB.content.length);
 }) ();
