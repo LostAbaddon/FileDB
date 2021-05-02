@@ -416,15 +416,6 @@ Thread.parentPort.on('flush', async request => {
 		return;
 	}
 
-	if (Thread.workerData.option.extension) {
-		let loader = require(Thread.workerData.option.extension);
-		if (!!loader) {
-			if (loader instanceof Function) await loader(DB);
-			else if (loader.init instanceof Function) await loader.init(DB);
-			else if (loader.onInit instanceof Function) await loader.onInit(DB);
-		}
-	}
-
 	var keys = Thread.workerData.option?.keys;
 	if (!!keys) {
 		if (!(keys instanceof Array)) keys = [keys];
@@ -445,6 +436,15 @@ Thread.parentPort.on('flush', async request => {
 		saveDelay = Thread.workerData.option?.delay;
 	}
 	if (autoClear > 0) DB.clearData();
+
+	if (Thread.workerData.option.extension) {
+		let loader = require(Thread.workerData.option.extension);
+		if (!!loader) {
+			if (loader instanceof Function) await loader(DB);
+			else if (loader.init instanceof Function) await loader.init(DB);
+			else if (loader.onInit instanceof Function) await loader.onInit(DB);
+		}
+	}
 
 	DB.send('init', DB.content.length);
 }) ();
