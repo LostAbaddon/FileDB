@@ -138,8 +138,7 @@ DB.requestDataClearer = () => {
 	DB.requestDataClearer.timer = setTimeout(DB.clearData, ClearDuration);
 };
 
-const ClearDuration = 1000 * 5;
-var saveDelay = 1000, autoClear = -1, delayDuration = 0;
+var ClearDuration = 1000 * 5, saveDelay = 1000, autoClear = -1, delayDuration = 0;
 
 Thread.parentPort.on('message', msg => {
 	if (!msg || !msg.event) return;
@@ -417,8 +416,8 @@ Thread.parentPort.on('flush', async request => {
 		return;
 	}
 
-	if (Thread.workerData.extension) {
-		let loader = require(Thread.workerData.extension);
+	if (Thread.workerData.option.extension) {
+		let loader = require(Thread.workerData.option.extension);
 		if (!!loader) {
 			if (loader instanceof Function) await loader(DB);
 			else if (loader.init instanceof Function) await loader.init(DB);
