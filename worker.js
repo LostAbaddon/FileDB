@@ -203,6 +203,10 @@ Thread.parentPort.on('get', request => {
 			result = map.get(request.key);
 		}
 	}
+	if (!result) {
+		send('jobdone', {tid: request.tid, result: null});
+		return;
+	}
 	result.count = (result.count || 0) + 1; 
 	result.stamp = Date.now();
 	send('jobdone', {tid: request.tid, result: result.data});
@@ -407,6 +411,15 @@ Thread.parentPort.on('flush', async request => {
 		return;
 	}
 
+	if (Thread.workerData.extension) {
+		let loader = require(Thread.workerData.extension);
+		if (!!loader) {
+			if (loader instanceof Function) await loader();
+			else if (loader.init instanceof Function) await loader.init();
+			else if (loader.onInit instanceof Function) await loader.onInit();
+		}
+	}
+
 	var keys = Thread.workerData.option?.keys;
 	if (!!keys) {
 		if (!(keys instanceof Array)) keys = [keys];
@@ -415,7 +428,7 @@ Thread.parentPort.on('flush', async request => {
 		keys.forEach(key => {
 			var map = new Map();
 			content.forEach(line => {
-				var value = line[key];
+				var value = line.data[key];
 				if (!value) return;
 				map.set(value, line);
 			});
